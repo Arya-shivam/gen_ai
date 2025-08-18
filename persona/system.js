@@ -9,6 +9,7 @@ const client = new OpenAI({
 });
 
 async function main() {
+
     const response = await client.chat.completions.create({
         // stateless model have no memory [ zero shot]
         model: "gemini-2.0-flash-exp",

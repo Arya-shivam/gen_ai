@@ -12,8 +12,17 @@
   "type": "module",
   "dependencies": {
     "@google/genai": "^1.14.0",
+    "axios": "^1.11.0",
+    "boxen": "^8.0.1",
+    "chalk": "^5.6.0",
+    "cheerio": "^1.1.2",
     "dotenv": "^17.2.1",
+    "fs": "^0.0.1-security",
+    "http": "^0.0.1-security",
     "js-tiktoken": "^1.0.21",
-    "openai": "^5.12.2"
+    "openai": "^5.12.2",
+    "ora": "^8.2.0",
+    "path": "^0.12.7",
+    "puppeteer": "^24.16.2"
   }
 }
