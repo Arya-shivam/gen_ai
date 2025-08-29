@@ -6,10 +6,9 @@ import { GoogleGenerativeAIEmbeddings } from "@langchain/google-genai";
 
 const pdfFilePath   = 'rag/Javabook.pdf';
 
-async function indexing(){
+async function Pdfindexing(){
     const loader = new PDFLoader(pdfFilePath);
     const docs = await loader.load();
-    // console.log(docs);
 
 
     // Ready the client OPEN AI embeddings
@@ -31,4 +30,4 @@ const vectorStore = await QdrantVectorStore.fromDocuments(
 console.log("Indexing Done.....")
 
 }
-indexing()
+Pdfindexing()
