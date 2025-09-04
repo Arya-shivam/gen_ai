@@ -1,24 +1,35 @@
 import 'dotenv/config';
-import { Agent, run } from '@openai/agents';
-import { aisdk } from '@openai/agents-extensions';
-import { google } from '@ai-sdk/google';
+import { Agent, run, tool } from '@openai/agents';
+import { z } from 'zod';
+import axios from 'axios';
 
-const SYSTEM_PROMPT = `You are a helpful agent that assists the user by completing given tasks.`;
-
-// Wrap Google Gemini with aisdk using the updated API
-const model = aisdk(
-        google("gemini-2.0-flash-exp", {
-        apiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY,
-    })
-);
-
-// Create the Agent
-const agent = new Agent({
-  name: "my-agent",
-  instructions: SYSTEM_PROMPT,
-  model,
+const googleSearch = tool({
+  name: 'googleSearch',
+  description: 'This tool helps you search on Google',
+  parameters: z.object({
+    query: z.string().describe('Query to search on Google'),
+  }),
+  async execute({ query }) {
+    const url = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+    const { data } = await axios.get(url, {
+      responseType: 'text',
+      headers: { 'User-Agent': 'Mozilla/5.0' }, // helps avoid 403s
+    });
+    return data;
+  },
 });
- 
-// Run the Agent
-const response = await run(agent, "When did sharks first appear?");
+
+const agent = new Agent({
+  name: 'Basic Agent',
+  instructions:
+    'You are a day-to-day agent helping with college and life. Reply step by step.',
+  tools: [googleSearch],
+});
+
+const query =
+  'My college is in Bangalore, can you give me some details about it, like weather?';
+
+const response = await run(agent, query);
+
+console.log(response.history);
 console.log(response.finalOutput);
