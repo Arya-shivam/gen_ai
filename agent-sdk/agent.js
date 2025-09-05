@@ -67,11 +67,18 @@ const agent =  Agent.create({
 
 // query
 const query =
-  `I am looking for colleges in Banglore, can you give me some details about CMRIT college in Banglore.
+  `best colleges in banglore?
   `;
 
 // run
-const response = await run(agent, query);
+const response = await run(agent, query,{
+  stream:true
+});
+response
+  .toTextStream({
+    compatibleWithNodeStreams: true,
+  })
+  .pipe(process.stdout);
 
-console.log(response.history);
-console.log(response.finalOutput);
+// console.log(response.history);
+// console.log(response.finalOutput);
