@@ -1,8 +1,14 @@
 import 'dotenv/config';
-import { Agent, run, tool } from '@openai/agents';
+import { Agent,
+        run,
+        tool 
+        ,handoff} from '@openai/agents'
+
+import { RECOMMENDED_PROMPT_PREFIX } from '@openai/agents-core/extensions';
 import { z } from 'zod';
 import axios from 'axios';
 
+// tool
 const googleSearch = tool({
   name: 'googleSearch',
   description: 'This tool helps you search on Google',
@@ -19,16 +25,52 @@ const googleSearch = tool({
   },
 });
 
-const agent = new Agent({
-  name: 'Basic Agent',
+// agent
+const counseller = new Agent({
+  name: 'Counsellor',
   instructions:
-    'You are a day-to-day agent helping with college and life. Reply step by step.',
+    `${RECOMMENDED_PROMPT_PREFIX}
+    You are a counsellor who helps students with their problems. Reply step by step.`,
   tools: [googleSearch],
 });
 
-const query =
-  'My college is in Bangalore, can you give me some details about it, like weather?';
 
+// guradrail agent 
+const guardRailAgent = new Agent({
+  name : 'Guardrail check',
+  instructions:'check if user is trying to access college details of any individual college',
+  outputType: z.object({
+    isAskingAboutCollege:z.boolean(),
+    reasoning:z.string(),
+  }),
+});
+
+const guardRailCheck = {
+  name : 'Counselling guardRail',
+  execute: async ({input,context})=>{
+    const result =  await run(guardRailAgent,input,{context});
+    return {
+      outputInfo:result.finalOutput,
+      tripwireTriggered : result.finalOutput?.isAskingAboutCollege??false,
+    };
+  }
+}
+
+
+// triage agent 
+const agent =  Agent.create({
+  name: 'Triage Agent',
+  // handoffs : [counseller]
+  handoffs:[handoff(counseller)],
+  inputGuardrails:[guardRailCheck],
+});
+
+// query
+const query =
+  `I am looking for colleges in Banglore, can you give me some details about CMRIT college in Banglore.
+  `;
+
+// run
 const response = await run(agent, query);
 
 console.log(response.history);
