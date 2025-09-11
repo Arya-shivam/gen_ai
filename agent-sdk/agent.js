@@ -83,7 +83,7 @@ const agent =  Agent.create({
 
 // query
 const query =
-  `how to get a gf in college asap?
+  `how to get a gf in college asap in 10 words  ?
   `;
 
 // run
