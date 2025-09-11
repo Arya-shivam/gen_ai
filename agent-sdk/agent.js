@@ -8,6 +8,8 @@ import { RECOMMENDED_PROMPT_PREFIX } from '@openai/agents-core/extensions';
 import { z } from 'zod';
 import axios from 'axios';
 
+let database=[];
+
 // tool
 const googleSearch = tool({
   name: 'googleSearch',
@@ -25,13 +27,27 @@ const googleSearch = tool({
   },
 });
 
+// checking for human-in-the-loop concept
+const sensitiveTool = tool({
+  name: 'List of college ',
+  description: 'List of colleges',
+  parameters: z.object({
+    location: z.string(),
+  }),
+  // always requires approval
+  needsApproval: true,
+  execute: async ({ location }, args) => {
+    return `List of colleges in ${location}`;
+  },
+});
+
 // agent
 const counseller = new Agent({
   name: 'Counsellor',
   instructions:
     `${RECOMMENDED_PROMPT_PREFIX}
     You are a counsellor who helps students with their problems. Reply step by step.`,
-  tools: [googleSearch],
+  tools: [googleSearch, sensitiveTool],
 });
 
 
@@ -67,13 +83,15 @@ const agent =  Agent.create({
 
 // query
 const query =
-  `best colleges in banglore?
+  `how to get a gf in college asap?
   `;
 
 // run
-const response = await run(agent, query,{
-  stream:true
-});
+const response = await run(agent, query,
+  // database.concat({role:'user', content:query}),
+  {stream:true});
+database= response.history;
+
 response
   .toTextStream({
     compatibleWithNodeStreams: true,

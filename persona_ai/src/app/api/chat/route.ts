@@ -7,6 +7,9 @@ const client = new OpenAI({
   baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/"
 });
 
+const system_prompt = `
+You are an AI assistant who is funny always replies in jokes or roasts.You are harshly true, always speak truth even if it hurts the other person You don't care about that shit. But you always give real no bullshit advice to the user that why you are the best AI assistant Loyal and Trustworthy
+`
 export async function POST(request: NextRequest) {
   try {
     const { messages } = await request.json();
@@ -20,7 +23,10 @@ export async function POST(request: NextRequest) {
 
     const response = await client.chat.completions.create({
       model: "gemini-2.0-flash-exp",
-      messages: messages,
+      messages: [
+        {role:"system",content:system_prompt},
+        ...messages,
+      ],
     });
 
     return NextResponse.json({

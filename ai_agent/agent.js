@@ -88,14 +88,6 @@ async function main() {
     },
   ];
 
-//   while (true) {
-//     const response = await client.chat.completions.create({
-//       model: 'gemini-2.0-flash-exp',
-//       messages: messages,
-//     // });
-
-//     console.log(response.choices[0].message.content);
-//   }
 
  while (true) {
     const response = await client.chat.completions.create({
