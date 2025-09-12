@@ -1,371 +1,567 @@
 import 'dotenv/config';
-import {Agent, run ,tool} from '@openai/agents';   
-import { RECOMMENDED_PROMPT_PREFIX } from '@openai/agents-core/extensions';
-// import SYSTEM_PROMPT from './system_prompt_shortone.js'
+import { Agent, run, tool } from '@openai/agents';
 import { chromium } from 'playwright';
 import { z } from 'zod';
 import OpenAI from 'openai';
 import fs from 'fs';
+import chalk from 'chalk';
+import figlet from 'figlet';
+import inquirer from 'inquirer';
+import ora from 'ora';
+import boxen from 'boxen';
+import gradient from 'gradient-string';
 
+// CLI Styling utilities
+const colors = {
+    primary: chalk.cyan,
+    success: chalk.green,
+    warning: chalk.yellow,
+    error: chalk.red,
+    info: chalk.blue,
+    tool: chalk.magenta,
+    result: chalk.gray,
+    highlight: chalk.bold.white
+};
 
-const system_prompt= `You are an advanced web automation agent powered by AI, specializing in executing user-defined tasks through precise browser control. Your objective is to efficiently and reliably complete assignments while adhering to best practices in web interaction, error handling, and adaptive reasoning
-    Core Workflow
+const symbols = {
+    success: '✅',
+    error: '❌',
+    warning: '⚠️',
+    info: 'ℹ️',
+    tool: '🔧',
+    robot: '🤖',
+    browser: '🌐',
+    loading: '⏳',
+    arrow: '→',
+    checkmark: '✓'
+};
 
-1.  **Initial Navigation**: Begin by invoking the \`Open_web_page\` tool to access the target URL provided in the task or inferred from context
-2.  **Page Analysis**: Upon successful page load, employ appropriate tools to inspect the content:
-    * For overview and interactive elements (e.g., links, buttons): Utilize \`GET_DOM_ELEMENTS\` to retrieve a concise summary of clickable or navigable components.
-    * For in-depth inspection (e.g., forms, dynamic content): Leverage \`Get_Page_HTML\` to obtain the full HTML structure.
-3.  **Strategic Planning and Execution**: Synthesize the analysis into a clear, sequential plan. Execute actions methodically, verifying outcomes at each step to ensure progress toward the task goal.
-     Specialized Form-Filling Protocol
+// Display beautiful banner
+function displayBanner() {
+    console.clear();
+    const title = figlet.textSync('Browser Agent', {
+        font: 'ANSI Shadow',
+        horizontalLayout: 'default',
+        verticalLayout: 'default'
+    });
+    
+    const gradientTitle = gradient.rainbow.multiline(title);
+    console.log(gradientTitle);
+    
+    console.log(boxen(
+        chalk.white('🚀 Advanced AI-Powered Web Automation Agent\n') +
+        chalk.gray('Navigate, interact, and automate any website with intelligent precision'),
+        {
+            padding: 1,
+            margin: 1,
+            borderStyle: 'round',
+            borderColor: 'cyan',
+            backgroundColor: 'black'
+        }
+    ));
+}
 
-For tasks involving form completion:
+// Progress tracking
+class ProgressTracker {
+    constructor() {
+        this.currentStep = 0;
+        this.totalSteps = 0;
+        this.spinner = null;
+    }
 
-1.  **Retrieve HTML Structure**: Immediately after navigation, call \`Get_Page_HTML\` to capture the page's complete markup.
-2.  **Element Identification**: Parse the HTML to locate all relevant input fields, including \`<input>\`, \`<textarea>\`, and \`<select>\` elements. Focus on attributes such as \`id\`, \`name\`, \`placeholder\`, \`class\`, and associated \`<label>\` elements to accurately map fields to their intended purposes (e.g., "Username", "Billing Address", "Confirmation Code").
-3.  **Develop Execution Plan**: Formulate a detailed, step-by-step strategy. For each identified field:
-    * Select appropriate placeholder or dummy data based on the field's semantics and any user-provided information.
-    * **Determine the most robust CSS selector using this strict hierarchy:**
-        * **Priority 1: Use \`id\`**. If an element has an \`id\` (e.g., \`<input id="firstName">\`), your selector **must** be the ID selector (e.g., \`#firstName\`). This is non-negotiable.
-        * **Priority 2: Use \`name\`**. If no \`id\` is present, use the \`name\` attribute (e.g., \`input[name="email"]\`).
-        * **Priority 3: Composite Selectors**. If neither \`id\` nor \`name\` is available, construct a selector from other attributes like \`placeholder\` or \`class\`.
-    * Account for validation requirements, dependencies between fields, or conditional visibility.
-4.  **Field Population**: Sequentially apply the \`Fill_Input\` tool for each field, supplying the chosen selector and value.
-5.  **Pre-Submission Screenshot**: After filling all form fields, you **must** call the \`Take_Screenshot\` tool to capture a visual record of the completed form before submission.
-6.  **Form Submission**: After taking the screenshot, identify the submission element (e.g., button with \`type="submit"\`) and use \`Click_Element\` to finalize the process. Confirm submission success through subsequent page analysis if needed.
+    setTotalSteps(total) {
+        this.totalSteps = total;
+    }
 
-     Operational Guidelines
+    startStep(message, type = 'info') {
+        this.currentStep++;
+        const prefix = `[${this.currentStep}/${this.totalSteps}]`;
+        
+        if (this.spinner) {
+            this.spinner.stop();
+        }
+        
+        this.spinner = ora({
+            text: `${prefix} ${message}`,
+            spinner: 'dots',
+            color: type === 'tool' ? 'magenta' : 'cyan'
+        }).start();
+    }
 
-* **Analysis-First Approach**: Always inspect and understand the current page state before performing any action. Avoid assumptions about selectors or page structure—base decisions on empirical data from tools.
-* **Error Resilience**: In the event of an action failure (e.g., element not found, timeout), re-evaluate the page using analysis tools to detect changes, such as dynamic updates or errors. Adjust your plan accordingly and retry with refinements.
-* **Termination Criteria**: If progress stalls due to insurmountable issues (e.g., persistent errors, inaccessible content), articulate the specific obstacle and halt operations. Prevent infinite loops by limiting retry attempts to a maximum of three per action.
-* **Task Completion**: Once you have verified that all steps of the user's request have been successfully completed, you **must** call the \`Task_Complete\` tool as your final action. This is the only way to end the mission.
-* **Efficiency and Security**: Prioritize minimal, targeted interactions to optimize performance. Respect web standards and avoid actions that could simulate malicious behavior, such as excessive scraping without necessity.
-* **Adaptability**: Tailor your reasoning to the task's complexity—escalate to more detailed analysis for intricate sites (e.g., those with JavaScript-heavy interfaces) and incorporate user feedback or clarifications as available.
+    updateStep(message) {
+        if (this.spinner) {
+            this.spinner.text = `[${this.currentStep}/${this.totalSteps}] ${message}`;
+        }
+    }
 
-Maintain a professional, concise communication style in your internal reasoning and any user-facing outputs, focusing on transparency and traceability of decisions.`
+    completeStep(message, success = true) {
+        if (this.spinner) {
+            this.spinner.stop();
+        }
+        
+        const symbol = success ? symbols.success : symbols.error;
+        const color = success ? colors.success : colors.error;
+        console.log(`${symbol} ${color(`[${this.currentStep}/${this.totalSteps}] ${message}`)}`);
+    }
+
+    showToolCall(toolName, params = {}) {
+        if (this.spinner) {
+            this.spinner.stop();
+        }
+        
+        const paramStr = Object.keys(params).length > 0 ? 
+            ` with ${Object.entries(params).map(([k, v]) => `${k}: "${v}"`).join(', ')}` : '';
+        
+        console.log(boxen(
+            `${symbols.tool} ${colors.tool.bold('TOOL CALL')}\n` +
+            `${colors.highlight(toolName)}${colors.result(paramStr)}`,
+            {
+                padding: { top: 0, bottom: 0, left: 1, right: 1 },
+                borderStyle: 'round',
+                borderColor: 'magenta',
+                backgroundColor: 'black'
+            }
+        ));
+    }
+
+    showToolResult(result, success = true) {
+        const symbol = success ? symbols.checkmark : symbols.error;
+        const color = success ? colors.success : colors.error;
+        
+        console.log(`  ${symbol} ${color('Result:')} ${colors.result(result)}\n`);
+    }
+
+    showAgentThinking(message) {
+        console.log(`${symbols.robot} ${colors.info('Agent:')} ${colors.highlight(message)}`);
+    }
+
+    showError(error) {
+        console.log(boxen(
+            `${symbols.error} ${colors.error.bold('ERROR')}\n${colors.result(error)}`,
+            {
+                padding: 1,
+                borderStyle: 'round',
+                borderColor: 'red',
+                backgroundColor: 'black'
+            }
+        ));
+    }
+
+    complete() {
+        if (this.spinner) {
+            this.spinner.stop();
+        }
+        
+        console.log(boxen(
+            `${symbols.success} ${colors.success.bold('MISSION ACCOMPLISHED!')}\n` +
+            `${colors.highlight('All tasks completed successfully')}`,
+            {
+                padding: 1,
+                borderStyle: 'double',
+                borderColor: 'green',
+                backgroundColor: 'black'
+            }
+        ));
+    }
+}
+
+const tracker = new ProgressTracker();
+
+// System prompt
+const system_prompt = `You are an advanced web automation agent. Execute tasks step-by-step:
+
+1. Open webpage and navigate to URL
+2. Analyze page elements comprehensively  
+3. Execute required actions (clicking, filling forms, etc.)
+4. Take screenshots when needed
+5. Complete the task
+
+For forms: Use get_comprehensive_elements, fill each field with fill_input_field, take screenshot, then submit.
+Always call task_complete when finished.`;
 
 const openai = new OpenAI();
 
-// - launching browser--
-console.log('🚀 Launching browser...');
-const browser = await chromium.launch({
-  headless: false,
-//   chromiumSandbox: true,
-//   env: {},
-  args: ['--no-sandbox','--disable-extensions', '--disable-file-system'],
-});
-console.log('✅ Browser launched.');
-
-// to store browser state 
-const browserState = {
-  page: null,
-  lastScreenshotPath: 'current_view.png', // Consistent file name for screenshots
-  currentPageElements: [], // Store the elements found by the vision model
-};
-
-// helper fucntion to analyze image in base64 format 
-async function analyzeScreenshot(imageBuffer){
-  const base64Image = imageBuffer.toString('base64');
-  const dataUrl = `data:image/png;base64,${base64Image}`;
-
-  try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o",
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: `
-                Analyze this screenshot of a webpage. Your goal is to identify all interactive elements, including buttons, links, and input fields.
-                For each element, provide a unique 'id' (integer, starting from 1), and a clear 'description' of its purpose (e.g., "Sign in button", "Username input field").
-                Return the result as a JSON object with a single key "elements". Each element object should have an "id" and a "description".
-              `,
-            },
-            {
-              type: "image_url",
-              image_url: { url: dataUrl },
-            },
-          ],
-        },
-      ],
-      max_tokens: 1024,
-    });
-    const result = JSON.parse(response.choices[0].message.content);
-    return result.elements || [];
-  } catch (error) {
-    console.error("Error analyzing image with OpenAI:", error);
-    return [];
-  }
+// Browser setup with progress indication
+async function initializeBrowser() {
+    const spinner = ora('Launching browser...').start();
+    
+    try {
+        const browser = await chromium.launch({
+            headless: false,
+            args: ['--no-sandbox', '--disable-extensions', '--disable-file-system'],
+        });
+        
+        spinner.succeed('Browser launched successfully');
+        return browser;
+    } catch (error) {
+        spinner.fail('Failed to launch browser');
+        throw error;
+    }
 }
 
+let browser;
+const browserState = {
+    page: null,
+    lastScreenshotPath: 'current_view.png',
+    currentPageElements: [],
+};
 
+// Enhanced tools with progress tracking
 const open_webpage = tool({
-    name : 'open_webpage',
-    description: 'This tool helps you open a webpage',
-    parameters:z.object({}),
-    async execute(){
-        if(!browserState.page){
+    name: 'open_webpage',
+    description: 'Opens a new browser page if none exists',
+    parameters: z.object({}),
+    async execute() {
+        tracker.showToolCall('open_webpage');
+        
+        if (!browserState.page) {
             browserState.page = await browser.newPage();
-            return 'A new browser page is open';
+            await browserState.page.setViewportSize({ width: 1280, height: 720 });
+            const result = 'A new browser page is open';
+            tracker.showToolResult(result);
+            return result;
         }
-        return 'A browser page is already open';
+        
+        const result = 'A browser page is already open';
+        tracker.showToolResult(result);
+        return result;
     },
-})
-
+});
 
 const go_to_url = tool({
     name: 'go_to_url',
-    description:'This tool is used to navigate the current page to a specified url',
-    parameters:z.object({
-        url:z.string().describe('Url to navigate to'),
+    description: 'Navigate to a specific URL with improved error handling',
+    parameters: z.object({
+        url: z.string().describe('URL to navigate to'),
     }),
-    async execute({url}){
-        if(!browserState.page){
-            console.log('Opening a new page');
+    async execute({ url }) {
+        tracker.showToolCall('go_to_url', { url });
+        
+        if (!browserState.page) {
             browserState.page = await browser.newPage();
+            await browserState.page.setViewportSize({ width: 1280, height: 720 });
         }
-        await browserState.page.goto(url, {waitUntil: 'networkidle'});
-        return 'Navigated to the url';
+        
+        try {
+            await browserState.page.goto(url, { 
+                waitUntil: 'domcontentloaded',
+                timeout: 30000 
+            });
+            
+            await browserState.page.waitForTimeout(2000);
+            
+            const result = `Successfully navigated to ${url}`;
+            tracker.showToolResult(result);
+            return result;
+        } catch (error) {
+            const result = `Error navigating to ${url}: ${error.message}`;
+            tracker.showToolResult(result, false);
+            return result;
+        }
     }
-})
+});
 
+const get_comprehensive_elements = tool({
+    name: 'get_comprehensive_elements',
+    description: 'Gets detailed information about all interactive elements with reliable selectors',
+    parameters: z.object({}),
+    async execute() {
+        tracker.showToolCall('get_comprehensive_elements');
+        
+        if (!browserState.page) {
+            const result = 'No page is open';
+            tracker.showToolResult(result, false);
+            return result;
+        }
+
+        try {
+            const elements = await browserState.page.evaluate(() => {
+                const results = [];
+                const selectors = [
+                    'input:not([type="hidden"])',
+                    'textarea', 'select', 'button', 'a[href]',
+                    '[role="button"]', '[role="link"]', '[onclick]', 'label'
+                ];
+                
+                const allElements = document.querySelectorAll(selectors.join(', '));
+                
+                Array.from(allElements).forEach((el, index) => {
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width === 0 && rect.height === 0) return;
+                    
+                    const elementInfo = {
+                        index: index + 1,
+                        tagName: el.tagName.toLowerCase(),
+                        type: el.type || null,
+                        id: el.id || null,
+                        name: el.name || null,
+                        placeholder: el.placeholder || null,
+                        textContent: el.textContent?.trim().substring(0, 100) || null,
+                    };
+                    
+                    let selector = null;
+                    if (el.id) {
+                        selector = `#${el.id}`;
+                    } else if (el.name && el.tagName.toLowerCase() !== 'a') {
+                        selector = `[name="${el.name}"]`;
+                    } else if (el.placeholder) {
+                        selector = `[placeholder="${el.placeholder}"]`;
+                    } else {
+                        const classes = el.className ? el.className.trim().split(/\s+/).slice(0, 2).join('.') : '';
+                        selector = el.tagName.toLowerCase() + (classes ? '.' + classes : '');
+                    }
+                    
+                    elementInfo.selector = selector;
+                    results.push(elementInfo);
+                });
+                
+                return results;
+            });
+
+            const formattedResults = elements.map(el => {
+                let description = `[${el.index}] ${el.tagName.toUpperCase()}`;
+                if (el.type) description += `[${el.type}]`;
+                if (el.id) description += ` (id: ${el.id})`;
+                if (el.name) description += ` (name: ${el.name})`;
+                if (el.placeholder) description += ` (placeholder: ${el.placeholder})`;
+                if (el.textContent) description += ` - "${el.textContent}"`;
+                description += ` | Selector: ${el.selector}`;
+                return description;
+            }).join('\n');
+
+            const result = `Found ${elements.length} interactive elements:\n${formattedResults}`;
+            tracker.showToolResult(`Found ${elements.length} interactive elements`);
+            return result;
+        } catch (error) {
+            const result = `Error getting elements: ${error.message}`;
+            tracker.showToolResult(result, false);
+            return result;
+        }
+    }
+});
+
+const smart_click = tool({
+    name: 'smart_click',
+    description: 'Intelligently clicks on elements using multiple fallback strategies',
+    parameters: z.object({
+        target: z.string().describe('Text content, CSS selector, or element description'),
+    }),
+    async execute({ target }) {
+        tracker.showToolCall('smart_click', { target });
+        
+        if (!browserState.page) {
+            const result = 'No page is open';
+            tracker.showToolResult(result, false);
+            return result;
+        }
+
+        const strategies = [
+            { name: 'button text exact', action: () => browserState.page.click(`button:has-text("${target}")`, { timeout: 2000 }) },
+            { name: 'button text case-insensitive', action: async () => {
+                const button = browserState.page.locator('button').filter({ hasText: new RegExp(target, 'i') });
+                if (await button.count() > 0) await button.first().click();
+                else throw new Error('Not found');
+            }},
+            { name: 'link text', action: () => browserState.page.click(`a:has-text("${target}")`, { timeout: 2000 }) },
+            { name: 'CSS selector', action: () => browserState.page.click(target, { timeout: 2000 }) },
+            { name: 'role button', action: () => browserState.page.getByRole('button', { name: new RegExp(target, 'i') }).first().click() },
+            { name: 'role link', action: () => browserState.page.getByRole('link', { name: new RegExp(target, 'i') }).first().click() },
+        ];
+
+        for (const strategy of strategies) {
+            try {
+                await strategy.action();
+                const result = `Successfully clicked using ${strategy.name}: ${target}`;
+                tracker.showToolResult(result);
+                return result;
+            } catch (e) {
+                continue;
+            }
+        }
+
+        const result = `Error: Could not find any clickable element for target: ${target}`;
+        tracker.showToolResult(result, false);
+        return result;
+    }
+});
+
+const fill_input_field = tool({
+    name: 'fill_input_field',
+    description: 'Fills input fields with improved handling for different input types',
+    parameters: z.object({
+        selector: z.string().describe('CSS selector of the input field'),
+        value: z.string().describe('Value to enter in the field'),
+        fieldType: z.enum(['text', 'email', 'password', 'number', 'tel', 'url', 'search']).nullable().optional().describe('Type of input field')
+    }),
+    async execute({ selector, value, fieldType }) {
+        tracker.showToolCall('fill_input_field', { selector, value });
+        
+        if (!browserState.page) {
+            const result = 'No page is open';
+            tracker.showToolResult(result, false);
+            return result;
+        }
+
+        try {
+            await browserState.page.waitForSelector(selector, { state: 'visible', timeout: 10000 });
+            const element = browserState.page.locator(selector);
+            
+            await element.click();
+            await browserState.page.keyboard.press('Control+a');
+            await element.fill('');
+            await browserState.page.waitForTimeout(500);
+            await element.fill(value);
+            await element.dispatchEvent('input');
+            await element.dispatchEvent('change');
+            await element.dispatchEvent('blur');
+
+            const result = `Successfully filled field ${selector} with: ${value}`;
+            tracker.showToolResult(result);
+            return result;
+        } catch (error) {
+            const result = `Error filling field ${selector}: ${error.message}`;
+            tracker.showToolResult(result, false);
+            return result;
+        }
+    }
+});
 
 const take_screenshot = tool({
     name: 'take_screenshot',
-    description: 'This tool helps you take a screenshot of the current page',
+    description: 'Takes a screenshot of the current page',
     parameters: z.object({}),
     async execute() {
-        if(!browserState.page){
-            return 'No page is open';
+        tracker.showToolCall('take_screenshot');
+        
+        if (!browserState.page) {
+            const result = 'No page is open';
+            tracker.showToolResult(result, false);
+            return result;
         }
-        await browserState.page.screenshot({path: browserState.lastScreenshotPath});
-        return `Screenshot saved to ${browserState.lastScreenshotPath}`;
-    },
-})
 
-// const analyze_elements = tool({
-//     name: 'analyze_elements',
-//     description: 'This tool helps you analyze the current page and identify all interactive elements, including buttons, links, and input fields. For each element, provide a unique "id" (integer, starting from 1), and a clear "description" of its purpose (e.g., "Sign in button", "Username input field"). Return the result as a JSON object with a single key "elements". Each element object should have an "id" and a "description".',
-//     parameters: z.object({}),
-//     async execute(){
-//     if (!fs.existsSync(browserState.lastScreenshotPath)) {
-//         return "Error: No screenshot found. Please use 'take_screenshot' first.";
-//     }
-//     console.log('🤖 Analyzing screenshot with vision model...');
-//     const screenshotBuffer = fs.readFileSync(browserState.lastScreenshotPath);
-//     const elements = await analyzeScreenshot(screenshotBuffer);
-    
-//     browserState.currentPageElements = elements;
-    
-//     const formattedElements = elements.map(e => `[${e.id}] ${e.description}`).join('\n');
-//     return `Analysis complete. Found the following interactive elements:\n${formattedElements}`;
-//   },
-// })
-
-const get_page_html = tool({
-            name: "Get_Page_HTML",
-            description: "Gets the full HTML content of the current page. Useful for understanding the structure of forms and elements.",
-            parameters: z.object({}),
-            async execute() {
-                try {
-                    console.log('Fetching page HTML...');
-                    const html = await browserState.page.content();
-                    // Truncate if the HTML is too long to avoid overwhelming the model
-                    return html.length > 20000 ? html.slice(0, 20000) + '... [HTML Truncated]' : html;
-                } catch (err) {
-                    console.log(`Failed to get page HTML: ${err}`);
-                    return `Error: Failed to get page HTML. Details: ${err.message}`;
-                }
-            },
-})
-
-const get_dom_elements =  tool({
-            name: "GET_DOM_ELEMENTS",
-            description: "Gets a simplified list of interactive elements from the current page DOM.",
-            parameters: z.object({}),
-            async execute() {
-                console.log("Getting DOM elements...");
-                const elements = await browserState.page.evaluate(() => {
-                    const interactiveElements = [];
-                    document
-                        .querySelectorAll("a, button, input[type=submit], input[type=button], [role='button'], [role='link']")
-                        .forEach((el) => {
-                            // Filter out non-visible elements
-                            if (el.offsetWidth > 0 && el.offsetHeight > 0) {
-                                interactiveElements.push({
-                                    text: el.innerText || el.value || el.getAttribute('aria-label') || "",
-                                    selector: el.tagName.toLowerCase() + (el.id ? `#${el.id}` : ""),
-                                });
-                            }
-                        });
-                    return interactiveElements;
-                });
-                return elements;
-            },
-})
-
-
-// const extract_structured_data = tool({
-//   name: 'extract_structured_data',
-//   description: "Extracts a structured list of all interactive elements (buttons, links, inputs) from the page's HTML. Use this when you can't find a specific element using the vision-based analysis.",
-//   parameters: z.object({}),
-//   async execute() {
-//     if (!browserState.page) return "Error: No active page.";
-
-//     console.log('📝 Extracting structured data from the DOM...');
-
-//     // This function will be executed in the browser's context to access the DOM
-//     const pageData = await browserState.page.evaluate(() => {
-//       const extractElements = (selector, type) => {
-//         return Array.from(document.querySelectorAll(selector)).map(el => {
-//           // Try to get the most meaningful text from the element
-//           const text = (el.textContent || el.innerText || el.getAttribute('aria-label') || el.getAttribute('value') || '').trim();
-//           return { type, text };
-//         });
-//       };
-
-//       const buttons = extractElements('button', 'Button');
-//       const links = extractElements('a', 'Link');
-//       const inputs = extractElements('input, textarea, select', 'Input');
-      
-//       return { buttons, links, inputs };
-//     });
-
-//     // Format the extracted data into a clean string for the agent
-//     let resultString = 'Structured data extracted from the page:\n';
-
-//     if (pageData.buttons.length > 0) {
-//       resultString += '\n**Buttons:**\n' + pageData.buttons.map(b => `- "${b.text}"`).join('\n');
-//     }
-//     if (pageData.links.length > 0) {
-//       resultString += '\n\n**Links:**\n' + pageData.links.map(l => `- "${l.text}"`).join('\n');
-//     }
-//     if (pageData.inputs.length > 0) {
-//       resultString += '\n\n**Inputs:**\n' + pageData.inputs.map(i => `- "${i.text}" (type: ${i.type})`).join('\n');
-//     }
-
-//     if (pageData.buttons.length === 0 && pageData.links.length === 0 && pageData.inputs.length === 0) {
-//       return "No standard interactive elements (buttons, links, inputs) were found on the page.";
-//     }
-
-//     return resultString;
-//   },
-// })
-
-const input_text=  tool({
-            name: "Fill_Input",
-            description: "Types text into an input field using its CSS selector by simulating key presses.",
-            parameters: z.object({
-                selector: z.string().describe("The CSS selector of the input field."),
-                value: z.string().describe("The text to type into the field."),
-            }),
-            async execute({ selector, value }) {
-                try {
-                    console.log(`Typing '${value}' into '${selector}' manually...`);
-                    // Use pressSequentially for a more human-like typing simulation
-                    await browserState.page.locator(selector).pressSequentially(value, { delay: 50 });
-                    return `Successfully typed '${value}' into '${selector}'.`;
-                } catch (err) {
-                    console.log(`Failed to fill input ${selector}: ${err}`);
-                    return `Error: Failed to fill input "${selector}". Details: ${err.message}`;
-                }
-            },
-})
-
-const scroll = tool({
-    name: 'scroll',
-    description: 'This tool helps you scroll the page',
-    parameters: z.object({}),
-    async execute() {
-        if(!browserState.page){
-            return 'No page is open';
+        try {
+            await browserState.page.screenshot({ 
+                path: browserState.lastScreenshotPath,
+                fullPage: true
+            });
+            const result = `Screenshot saved to ${browserState.lastScreenshotPath}`;
+            tracker.showToolResult(result);
+            return result;
+        } catch (error) {
+            const result = `Error taking screenshot: ${error.message}`;
+            tracker.showToolResult(result, false);
+            return result;
         }
-        await browserState.page.evaluate(() => {
-            window.scrollTo(0, document.body.scrollHeight);
-        });
-        return 'Scrolled to the bottom of the page';
-    },
-})
-
-const click_element =   tool({
-            name: "Click_Element",
-            description: "Intelligently clicks on an element. It first tries to find the element by its visible text or role, then falls back to a CSS selector.",
-            parameters: z.object({ target: z.string().describe("The text of the element or its CSS selector.") }),
-            async execute({ target }) {
-                try {
-                    // Try to find by role (button)
-                    let locator = browserState.page.getByRole("button", { name: new RegExp(target, "i") });
-                    if (await locator.count() > 0) {
-                        await locator.first().click();
-                        console.log(`Clicked button with text: ${target}`);
-                        return `Successfully clicked button with text: ${target}`;
-                    }
-
-                    // Try to find by role (link)
-                    locator = browserState.page.getByRole("link", { name: new RegExp(target, "i") });
-                    if (await locator.count() > 0) {
-                        await locator.first().click();
-                        console.log(`Clicked link with text: ${target}`);
-                        return `Successfully clicked link with text: ${target}`;
-                    }
-
-                    // Fallback to general text
-                    locator = browserState.page.getByText(new RegExp(`^${target}$`, "i"));
-                    if (await locator.count() > 0) {
-                        await locator.first().click();
-                        console.log(`Clicked element with text: ${target}`);
-                        return `Successfully clicked element with text: ${target}`;
-                    }
-
-                    // Fallback to CSS selector
-                    locator =browserState.page.locator(target);
-                    if (await locator.count() > 0) {
-                        await locator.first().click();
-                        console.log(`Clicked CSS selector: ${target}`);
-                        return `Successfully clicked CSS selector: ${target}`;
-                    }
-
-                    console.log(`No element found for: ${target}`);
-                    return `Error: No element found for target "${target}".`;
-                } catch (err) {
-                    console.log(`Failed to click ${target}`, err);
-                    return `Error: Failed to click "${target}". Details: ${err.message}`;
-                }
-            },
-})
-
-const close_page = tool({
-    name: 'close_page',
-    description: 'Closes the current browser page. Use this when the task is complete.',
-    parameters: z.object({}),
-    async execute() {
-        if (browserState.page && !browserState.page.isClosed()) {
-            await browserState.page.close();
-            browserState.page = null;
-            return 'Page closed.';
-        }
-        return 'No active page to close.';
     }
 });
 
-
-
-const agent = Agent.create({
-  name: ' Browser Agent',
-  instructions: `${system_prompt}`,
-  tools: [open_webpage  , go_to_url, take_screenshot, scroll , get_dom_elements, get_page_html , input_text , click_element, close_page],
+const task_complete = tool({
+    name: 'task_complete',
+    description: 'Marks the current task as complete',
+    parameters: z.object({
+        summary: z.string().describe('Brief summary of what was accomplished')
+    }),
+    async execute({ summary }) {
+        tracker.showToolCall('task_complete', { summary });
+        const result = `✅ Task completed successfully: ${summary}`;
+        tracker.showToolResult(result);
+        tracker.complete();
+        return result;
+    }
 });
 
-const query = 'I want you to fill form on https://ui.chaicode.com/auth/signup? with random data';
+// Main CLI function
+async function main() {
+    try {
+        displayBanner();
+        
+        // Get user input
+        const answers = await inquirer.prompt([
+            {
+                type: 'input',
+                name: 'task',
+                message: colors.primary('What would you like the browser agent to do?'),
+                default: 'Fill form on https://ui.chaicode.com/auth/signup with random data'
+            },
+            {
+                type: 'confirm',
+                name: 'confirm',
+                message: colors.warning('Ready to start the automation?'),
+                default: true
+            }
+        ]);
 
-const response = await run(agent, query, {stream: true});
+        if (!answers.confirm) {
+            console.log(colors.info('Operation cancelled by user.'));
+            return;
+        }
 
-response
-  .toTextStream({
-    compatibleWithNodeStreams: true,
-  })
-  .pipe(process.stdout);
- 
+        // Initialize browser
+        browser = await initializeBrowser();
+        
+        // Create agent
+        const agent = Agent.create({
+            name: 'Enhanced Browser Agent',
+            instructions: system_prompt,
+            tools: [
+                open_webpage,
+                go_to_url,
+                get_comprehensive_elements,
+                smart_click,
+                fill_input_field,
+                take_screenshot,
+                task_complete
+            ],
+        });
+
+        console.log(boxen(
+            `${symbols.robot} ${colors.info.bold('STARTING AUTOMATION')}\n` +
+            `Task: ${colors.highlight(answers.task)}`,
+            {
+                padding: 1,
+                borderStyle: 'round',
+                borderColor: 'blue',
+                backgroundColor: 'black'
+            }
+        ));
+
+        // Run the agent
+        const response = await run(agent, answers.task, { stream: true });
+
+        // Stream the response with enhanced formatting
+        const stream = response.toTextStream({ compatibleWithNodeStreams: true });
+        
+        stream.on('data', (chunk) => {
+            const text = chunk.toString();
+            if (text.trim()) {
+                // Check if this looks like agent reasoning vs tool output
+                if (!text.includes('Tool call:') && !text.includes('Result:')) {
+                    tracker.showAgentThinking(text.trim());
+                }
+            }
+        });
+
+        stream.on('end', () => {
+            console.log('\n' + colors.success('🎉 Automation completed!'));
+        });
+
+        stream.on('error', (error) => {
+            tracker.showError(error.message);
+        });
+
+    } catch (error) {
+        tracker.showError(`Initialization failed: ${error.message}`);
+    }
+}
+
+// Handle cleanup
+process.on('SIGINT', async () => {
+    console.log('\n' + colors.warning('Shutting down...'));
+    if (browser) {
+        await browser.close();
+    }
+    process.exit(0);
+});
+
+// Start the CLI
+main().catch(console.error);
